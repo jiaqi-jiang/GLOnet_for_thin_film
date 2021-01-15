@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from TMM import *
 from tqdm import tqdm
-from net import Generator, GeneratorNF, ResGenerator
+from net import Generator, GeneratorNF, ResGenerator, GeneratorMM
 
 class GLOnet():
     def __init__(self, params):
@@ -22,17 +22,17 @@ class GLOnet():
             self.generator = GeneratorNF(params)
         elif params.net == 'Res':
             self.generator = ResGenerator(params)
+        elif params.net == 'MM':
+            self.generator = GeneratorMM(params)
         else:
             self.generator = Generator(params)
         
         if self.cuda: 
             self.generator.cuda()
-        self.optimizer = torch.optim.Adam(self.generator.parameters(), lr=params.lr, betas = (params.beta1, params.beta2))
+        self.optimizer = torch.optim.Adam(self.generator.parameters(), lr=params.lr, betas = (params.beta1, params.beta2), weight_decay = params.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size = params.step_size, gamma = params.step_size)
         
         # training parameters
-        self.is_robust = params.is_robust
-        self.robust_coeff = params.robust_coeff
         self.noise_dim = params.noise_dim
         self.numIter = params.numIter
         self.batch_size = params.batch_size
@@ -95,10 +95,7 @@ class GLOnet():
                 self.optimizer.zero_grad()
 
                 # construct the loss 
-                if self.is_robust:
-                    g_loss = self.global_loss_function_robust(reflection, thicknesses)
-                else:
-                    g_loss = self.global_loss_function(reflection)
+                g_loss = self.global_loss_function(reflection)
                 
                 
                 # record history
@@ -143,11 +140,24 @@ class GLOnet():
         reflection = TMM_solver(thicknesses, ref_idx, self.n_bot, self.n_top, kvector.type(self.dtype), inc_angles.type(self.dtype), pol)
         return (thicknesses, ref_idx, result_mat, reflection)
     
+    def _TMM_solver(self, thicknesses, result_mat, kvector = None, inc_angles = None, pol = None):
+        if kvector is None:
+            kvector = self.k
+        if inc_angles is None:
+            inc_angles = self.theta
+        if pol is None:
+            pol = self.pol  
+        n_database = self.matdatabase.interp_wv(2 * math.pi/kvector, self.materials, True).unsqueeze(0).unsqueeze(0).type(self.dtype)
+        one_hot = torch.eye(len(self.materials)).type(self.dtype)
+        ref_idx = torch.sum(one_hot[result_mat].unsqueeze(-1) * n_database, dim=2)
+        reflection = TMM_solver(thicknesses, ref_idx, self.n_bot, self.n_top, kvector.type(self.dtype), inc_angles.type(self.dtype), pol)
+        return reflection
+        
     def update_alpha(self, normIter):
         self.alpha = round(normIter/0.05) * self.alpha_sup + 1.
         
     def sample_z(self, batch_size):
-        return (torch.rand(batch_size, self.noise_dim, requires_grad=True)*2.-1.).type(self.dtype)
+        return (torch.randn(batch_size, self.noise_dim, requires_grad=True)).type(self.dtype)
     
     def global_loss_function(self, reflection):
         return -torch.mean(torch.exp(-torch.mean(torch.pow(reflection - self.target_reflection, 2), dim=(1,2,3))/self.sigma))
