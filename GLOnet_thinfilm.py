@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from TMM import *
 from tqdm import tqdm
-from net import Generator, GeneratorNF, ResGenerator, GeneratorMM
+from net import Generator, ResGenerator
 
 class GLOnet():
     def __init__(self, params):
@@ -18,12 +18,8 @@ class GLOnet():
             self.dtype = torch.FloatTensor
             
         # construct
-        if params.net == 'NF':
-            self.generator = GeneratorNF(params)
-        elif params.net == 'Res':
+        if params.net == 'Res':
             self.generator = ResGenerator(params)
-        elif params.net == 'MM':
-            self.generator = GeneratorMM(params)
         else:
             self.generator = Generator(params)
         
